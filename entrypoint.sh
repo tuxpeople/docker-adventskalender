@@ -3,7 +3,7 @@
 if [ "`date +%m%d`" -lt "1201" ]; then echo "Noch nicht advent"; exit; fi
 if [ "`date +%m%d`" -gt "1224" ]; then echo "nicht mehr advent"; exit; fi
 
-LINE=$(sed -n `date +%d`p zitate.txt)
+LINE=$(sed -n `date +%d`p /zitate.txt)
 
 SAY=$(echo ${LINE} | cut -d';' -f1)
 PERSON=$(echo ${LINE} | cut -d';' -f2)
