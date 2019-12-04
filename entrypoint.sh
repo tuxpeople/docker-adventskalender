@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/sh
 
 if [ "`date +%m%d`" -lt "1201" ]; then echo "Noch nicht advent"; exit; fi
 if [ "`date +%m%d`" -gt "1224" ]; then echo "nicht mehr advent"; exit; fi
