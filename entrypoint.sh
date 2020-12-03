@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [ "`date +%m%d`" -lt "1201" ]; then echo "Noch nicht advent"; exit; fi
-if [ "`date +%m%d`" -gt "1224" ]; then echo "nicht mehr advent"; exit; fi
+if [ "`date +%m%d`" -lt "1201" ]; then echo "Es ist noch nicht Advent."; exit; fi
+if [ "`date +%m%d`" -gt "1224" ]; then echo "Es ist nicht mehr Advent"; exit; fi
 
 LINE=$(sed -n `date +%d`p /zitate.txt)
 
