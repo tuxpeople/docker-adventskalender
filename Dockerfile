@@ -11,11 +11,11 @@ RUN apt-get update && \
     /venv/bin/pip install --upgrade pip setuptools wheel
 
 # Build the virtualenv as a separate step: Only re-execute this step when requirements.txt changes
-# hadolint ignore=DL3008
 FROM build AS build-venv
 RUN /venv/bin/pip install --disable-pip-version-check dinosay 
 
 # Copy the virtualenv into a distroless image
+# hadolint ignore=DL3006
 FROM gcr.io/distroless/python3-debian11
 COPY --from=build-venv /venv /venv
 COPY . /app
