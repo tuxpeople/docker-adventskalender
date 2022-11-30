@@ -3,12 +3,15 @@
 # * Install gcc libpython3-dev to compile C Python modules
 # * In the virtualenv: Update pip setuputils and wheel to support building new packages
 FROM debian:11-slim AS build
+
+# hadolint ignore=DL3008,DL3009
 RUN apt-get update && \
     apt-get install --no-install-suggests --no-install-recommends --yes python3-venv gcc libpython3-dev && \
     python3 -m venv /venv && \
     /venv/bin/pip install --upgrade pip setuptools wheel
 
 # Build the virtualenv as a separate step: Only re-execute this step when requirements.txt changes
+# hadolint ignore=DL3008
 FROM build AS build-venv
 RUN /venv/bin/pip install --disable-pip-version-check dinosay 
 
