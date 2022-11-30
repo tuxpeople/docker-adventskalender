@@ -76,7 +76,7 @@ jobs:
         id: docker_build
         uses: docker/build-push-action@v3.2.0
         with:
-          context: .w
+          context: .
           file: ./Dockerfile
           platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name != 'pull_request' }}
