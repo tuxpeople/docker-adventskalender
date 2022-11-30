@@ -1,0 +1,103 @@
+name: "Build & Release"
+
+# This worflow needs those secrets:
+#
+# REGISTRY_TOKEN = quay.io token
+# DOCKERPASSWORD = Docker Hub token
+
+on:
+  workflow_dispatch:
+
+env:
+  PLATFORMS: "linux/amd64,linux/arm/v7,linux/arm/v6,linux/arm64"     # Build for which platforms
+  DOCKER_USER: "tdeutsch"                                            # Which user to use to login to DockerHub
+
+#####
+# To rebuild someone else's repo, do this:
+#
+# - New env    REPOSITORY: "githubuser/githubrepo"
+# - Add this to the checkout:
+#        with:
+#          repository: ${{ env.REPOSITORY }}
+# - One may also need to disable hadolint, due to the quality of others Dockerfile
+#####
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v3.1.0
+      -
+        name: Generate Build-Args
+        id: build-args
+        run: |
+          # echo ::set-output name=build-arg1::"buildarg1"
+          # echo ::set-output name=build-arg2::"buildarg2"
+      -
+        name: Branch name
+        run: echo running on branch ${GITHUB_REF##*/}
+      -
+        name: Prepare
+        id: prep
+        run: |
+          IMAGENAME=$(echo ${{ github.repository }} | sed 's/${{ github.repository_owner }}\/docker-//g')
+          IMAGEPREFIX="docker.io/${{ env.DOCKER_USER }}"
+          IMAGE="${IMAGEPREFIX}/${IMAGENAME}"
+          VERSION=${GITHUB_REF##*/}
+          TAGS="${IMAGE}:${VERSION}"
+          echo ${VERSION}
+          echo ::set-output name=tags::${TAGS}
+          echo ::set-output name=imagename::${IMAGENAME}
+          echo ::set-output name=version::${VERSION}
+          echo ::set-output name=created::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+      -
+        name: Hadolint
+        uses: brpaz/hadolint-action@v1.5.0
+        with: 
+          dockerfile: Dockerfile
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v2.1.0
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2.2.1
+      -
+        name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v3.2.0
+        with:
+          context: .w
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.prep.outputs.tags }}
+          build-args: |
+            ${{ steps.build-args.outputs.build-arg1 }}
+            ${{ steps.build-args.outputs.build-arg2 }}
+          labels: |
+            org.opencontainers.image.title=${{ steps.prep.outputs.imagename }}
+            org.opencontainers.image.description=${{ github.event.repository.description }}
+            org.opencontainers.image.url=${{ github.event.repository.html_url }}
+            org.opencontainers.image.source=${{ github.event.repository.clone_url }}
+            org.opencontainers.image.version=${{ steps.prep.outputs.version }}
+            org.opencontainers.image.created=${{ steps.prep.outputs.created }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=${{ github.event.repository.license.spdx_id }}
+      -
+        name: Docker Hub Description
+        uses: peter-evans/dockerhub-description@v3.1.1
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ secrets.DOCKERPASSWORD }}
+          repository: "${{ env.DOCKER_USER }}/${{ steps.prep.outputs.imagename }}"
+          short-description: ${{ github.event.repository.description }}
