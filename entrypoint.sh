@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 function box_out()
 {
   local s=("$@") b w
