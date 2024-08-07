@@ -28,7 +28,7 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
       -
         name: Generate Build-Args
         id: build-args
@@ -54,19 +54,19 @@ jobs:
           echo ::set-output name=created::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
       -
         name: Hadolint
-        uses: brpaz/hadolint-action@v1.5.0
+        uses: brpaz/hadolint-action@c27bd9edc1e95eed30474db8f295ff5807ebca14 # v1.5.0
         with: 
           dockerfile: Dockerfile
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.2.0
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
+        uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db # v3.6.1
       -
         name: Login to Dockerhub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: docker.io
           username: ${{ env.DOCKER_USER }}
