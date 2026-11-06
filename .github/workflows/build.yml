@@ -132,10 +132,18 @@ jobs:
         run: |
           for image in "${DOCKERHUB_IMAGE}" "${GHCR_IMAGE}"; do
             cosign sign --yes "${image}@${DIGEST}"
-            cosign verify \
-              --certificate-identity "https://github.com/${{ github.workflow_ref }}" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              "${image}@${DIGEST}" > /dev/null
+            # Docker Hub serves a new signature only after a short delay
+            for attempt in 1 2 3 4 5 6; do
+              if cosign verify \
+                --certificate-identity "https://github.com/${{ github.workflow_ref }}" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                "${image}@${DIGEST}" > /dev/null; then
+                break
+              fi
+              [[ $attempt -eq 6 ]] && { echo "::error::signature of ${image} not verifiable"; exit 1; }
+              echo "Signature not visible yet, retrying in 10s"
+              sleep 10
+            done
           done
           echo "✅ Signatures verified"
 
