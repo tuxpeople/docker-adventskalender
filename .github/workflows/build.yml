@@ -1,0 +1,200 @@
+name: Build & Release
+
+# Builds one image per folder in years/, tagged with the year:
+#   docker.io/tdeutsch/adventskalender:<YEAR>
+#   ghcr.io/tuxpeople/adventskalender:<YEAR>
+# Pull requests only build and test. Pushes to master (e.g. a Renovate
+# update of the base image) and the monthly run rebuild and publish every
+# year, so old years get security updates too; the tags never change.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "years/**"
+      - Dockerfile
+      - test.sh
+      - .github/workflows/build.yml
+  pull_request:
+  schedule:
+    - cron: "23 5 1 * *" # monthly, 1st at 05:23 UTC (also 1 December)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+
+env:
+  DOCKERHUB_IMAGE: docker.io/tdeutsch/adventskalender
+  GHCR_IMAGE: ghcr.io/tuxpeople/adventskalender
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  years:
+    runs-on: ubuntu-latest
+    outputs:
+      years: ${{ steps.list.outputs.years }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: List years
+        id: list
+        run: |
+          years=$(find years -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9][0-9]' -printf '%f\n' | sort | jq -R . | jq -sc .)
+          echo "years=${years}" >> "$GITHUB_OUTPUT"
+          echo "Years: ${years}"
+
+  build:
+    needs: years
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        year: ${{ fromJSON(needs.years.outputs.years) }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Cosign keyless signing + attestations
+      security-events: write # Trivy SARIF
+      attestations: write
+      artifact-metadata: write
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        with:
+          dockerfile: Dockerfile
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Test first, publish only what passed
+      - name: Build for test
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: adventskalender:test
+          build-args: YEAR=${{ matrix.year }}
+
+      - name: Smoke test
+        run: bash test.sh adventskalender:test
+
+      - name: Login to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: docker.io
+          username: tdeutsch
+          password: ${{ secrets.DOCKERPASSWORD }}
+
+      - name: Login to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          build-args: YEAR=${{ matrix.year }}
+          tags: |
+            ${{ env.DOCKERHUB_IMAGE }}:${{ matrix.year }}
+            ${{ env.GHCR_IMAGE }}:${{ matrix.year }}
+          labels: |
+            org.opencontainers.image.version=${{ matrix.year }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          sbom: true
+          provenance: true
+
+      - name: Install Cosign
+        if: env.PUBLISH == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign and verify (keyless)
+        if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          for image in "${DOCKERHUB_IMAGE}" "${GHCR_IMAGE}"; do
+            cosign sign --yes "${image}@${DIGEST}"
+            cosign verify \
+              --certificate-identity "https://github.com/${{ github.workflow_ref }}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${image}@${DIGEST}" > /dev/null
+          done
+          echo "✅ Signatures verified"
+
+      - name: Install trivy
+        env:
+          # renovate: datasource=github-releases depName=aquasecurity/trivy
+          TRIVY_VERSION: v0.76.1
+        run: curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+
+      # Only actionable findings: CRITICAL/HIGH with an available fix
+      - name: Scan (table)
+        run: trivy image --severity CRITICAL,HIGH --ignore-unfixed adventskalender:test
+
+      - name: Scan (SARIF)
+        if: env.PUBLISH == 'true'
+        run: |
+          trivy image --format sarif --output trivy-results.sarif \
+            --severity CRITICAL,HIGH --ignore-unfixed "${GHCR_IMAGE}@${{ steps.build.outputs.digest }}"
+
+      - name: Upload scan results
+        if: env.PUBLISH == 'true'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: adventskalender-${{ matrix.year }}
+
+      - name: Generate SBOM
+        if: env.PUBLISH == 'true'
+        run: |
+          trivy image --quiet --format spdx-json --output sbom.spdx.json \
+            "${GHCR_IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Verify with: gh attestation verify oci://ghcr.io/tuxpeople/adventskalender:<YEAR> --owner tuxpeople
+      - name: Attest build provenance
+        if: env.PUBLISH == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest SBOM
+        if: env.PUBLISH == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+  dockerhub-description:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: tdeutsch
+          password: ${{ secrets.DOCKERPASSWORD }}
+          repository: tdeutsch/adventskalender
+          short-description: "Docker-Adventskalender: docker run tdeutsch/adventskalender:<Jahr>"
